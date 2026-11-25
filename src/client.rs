@@ -345,13 +345,30 @@ impl DmClient {
     }
 
     fn server_error(&self, f: &Frame) -> DmError {
-        let body = &f.body;
+        let msg = self.error_message(&f.body);
+        DmError::server(f.retcode, msg)
+    }
+
+    /// 错误体布局：[12 字节二进制头][int32 消息长度][消息文本]。按布局解析得到干净
+    /// 消息（如 "用户名或密码错误"）；整体解码时长度低字节恰为可打印字符会出现
+    /// "E   " 之类前缀。布局不合规时退回旧的启发式（去掉前导控制字符）。
+    fn error_message(&self, body: &[u8]) -> String {
+        if body.len() >= 16 {
+            let ln = le_i32(body, 12);
+            if ln > 0 {
+                let end = (16 + ln as usize).min(body.len());
+                let text = self.decode_lossy(&body[16..end]);
+                let text = text.trim();
+                if !text.is_empty() {
+                    return text.to_string();
+                }
+            }
+        }
         let mut msg = self.decode_lossy(body);
         // 服务器错误 body 结构：[二进制头][int32 消息长度][消息文本]，
         // 去掉前导控制字符/NUL，只保留可读消息（如 "用户名或密码错误"）。
         let start = msg.find(|c: char| !c.is_control()).unwrap_or(0);
-        msg = msg[start..].trim().to_string();
-        DmError::server(f.retcode, msg)
+        msg[start..].trim().to_string()
     }
 
     fn check_ok(&self, f: &Frame) -> Result<()> {
