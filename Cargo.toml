@@ -52,10 +52,6 @@ name = "basic"
 path = "examples/basic.rs"
 
 [[example]]
-name = "probe"
-path = "examples/probe.rs"
-
-[[example]]
 name = "cursor_pool"
 path = "examples/cursor_pool.rs"
 
