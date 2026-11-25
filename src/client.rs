@@ -364,7 +364,7 @@ impl DmClient {
                 }
             }
         }
-        let mut msg = self.decode_lossy(body);
+        let msg = self.decode_lossy(body);
         // 服务器错误 body 结构：[二进制头][int32 消息长度][消息文本]，
         // 去掉前导控制字符/NUL，只保留可读消息（如 "用户名或密码错误"）。
         let start = msg.find(|c: char| !c.is_control()).unwrap_or(0);
