@@ -593,6 +593,9 @@ impl DmClient {
 
         // 读取响应序列：结果帧为 cmd=187（结果集或影响行数）；cmd=0 是中间状态帧，继续读
         let mut frames: Vec<Frame> = prep_frames;
+        // 会话状态语句（SET SCHEMA / ALTER SESSION / 无结果集的 CALL）的响应只有
+        // cmd=0 短状态帧（length≤30），没有 cmd=187 结果帧
+        let mut status_only = false;
         for _ in 0..4 {
             // 若 cmd=13 响应已含结果帧（cmd=187），不再阻塞读取
             if frames.iter().any(|x| x.cmd == 187) {
@@ -606,6 +609,13 @@ impl DmClient {
             // 服务器发完即止，不再发 cmd=187：读到就停，交给下面的处理分支
             if f.cmd == 149 {
                 frames.push(f);
+                break;
+            }
+            // 无 187 伴随的 cmd=0 短帧即该语句的完整响应：停止读取，按 Affected(0)
+            // 返回（否则苦等 cmd=187 至超时）；有 187 伴随时不受影响
+            if f.cmd == 0 && f.length <= 30 && !frames.iter().any(|x| x.cmd == 187) {
+                frames.push(f);
+                status_only = true;
                 break;
             }
             let is187 = f.cmd == 187;
@@ -723,7 +733,9 @@ impl DmClient {
         if params.is_empty() {
             let _ = self.send(CMD_EXEC_COMPLETE, &[0u8; 44], &[], stmt).and_then(|_| self.read_frame());
         }
-        result.ok_or_else(|| DmError::protocol("执行未产生有效结果帧"))
+        result
+            .or_else(|| status_only.then(|| ExecuteResult::Affected(0)))
+            .ok_or_else(|| DmError::protocol("执行未产生有效结果帧"))
     }
 
     /// 惰性查询：只拉第一帧（fetchSize 行），返回 (cols, state)。
