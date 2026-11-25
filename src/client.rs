@@ -911,7 +911,9 @@ impl DmClient {
         while offset < length {
             let req = req_unit.min(length - offset);
             // cmd=32 参数区：lobFlag+tabId+colId+blobId+groupId+fileId+pageNo+curFileId+curPageNo+totalOffset+offset+length+rowId+exGroupId+exFileId+exPageNo
-            let mut body = Vec::with_capacity(59);
+            // offset/length 协议为 int32（Go dm_build_676.dm_build_421）：写 i64 时服务器读到的
+            // length 低 4 字节为 0，行外 LOB 读回为空。
+            let mut body = Vec::with_capacity(51);
             body.push(lob_flag);
             body.extend_from_slice(&tab_id.to_le_bytes());
             body.extend_from_slice(&col_id.to_le_bytes());
@@ -922,8 +924,8 @@ impl DmClient {
             body.extend_from_slice(&cur_file.to_le_bytes());
             body.extend_from_slice(&cur_page.to_le_bytes());
             body.extend_from_slice(&total_offset.to_le_bytes());
-            body.extend_from_slice(&offset.to_le_bytes());
-            body.extend_from_slice(&req.to_le_bytes());
+            body.extend_from_slice(&(offset as i32).to_le_bytes());
+            body.extend_from_slice(&(req as i32).to_le_bytes());
             body.extend_from_slice(&row_id.to_le_bytes());
             body.extend_from_slice(&ex_group.to_le_bytes());
             body.extend_from_slice(&ex_file.to_le_bytes());
@@ -948,7 +950,8 @@ impl DmClient {
             cur_file = i16::from_le_bytes(f.body[5..7].try_into().unwrap());
             cur_page = i32::from_le_bytes(f.body[7..11].try_into().unwrap());
             total_offset = i32::from_le_bytes(f.body[11..15].try_into().unwrap());
-            offset += if is_clob { req } else { dlen as i64 };
+            // 按服务器实际返回的量推进：CLOB 的 dlen 是字符数（不是请求的字节数），BLOB 是字节数
+            offset += dlen as i64;
             if read_over != 0 {
                 break;
             }
