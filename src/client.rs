@@ -585,6 +585,12 @@ impl DmClient {
             if f.retcode != 0 && f.retcode != 111 && f.retcode != 100 {
                 return Err(self.server_error(&f));
             }
+            // EXPLAIN 的响应是 cmd=149 计划帧（Go retSqlType Dm_build_386=127+22=149），
+            // 服务器发完即止，不再发 cmd=187：读到就停，交给下面的处理分支
+            if f.cmd == 149 {
+                frames.push(f);
+                break;
+            }
             let is187 = f.cmd == 187;
             frames.push(f);
             if is187 {
@@ -651,6 +657,30 @@ impl DmClient {
                         }
                     }
                 }
+            } else if f.cmd == 149 {
+                // EXPLAIN 计划帧：帧体 [int32 长度][计划文本]，按行返回单列 PLAN 结果集
+                let text = if f.body.len() >= 4 {
+                    let ln = le_i32(&f.body, 0).max(0) as usize;
+                    let end = (4 + ln).min(f.body.len());
+                    self.decode_lossy(&f.body[4..end])
+                } else {
+                    String::new()
+                };
+                let rows: Vec<Vec<Value>> =
+                    text.lines().map(|l| vec![Value::Str(l.to_string())]).collect();
+                let columns = vec![Column {
+                    col_type: 2,
+                    prec: 0,
+                    scale: 0,
+                    nullable: true,
+                    name: "PLAN".into(),
+                    type_name: "VARCHAR".into(),
+                    table_name: String::new(),
+                    schema_name: String::new(),
+                    lob: false,
+                }];
+                result = Some(ExecuteResult::Query { columns, rows });
+                break 'outer;
             } else if f.cmd == 187 {
                 // DML 结果：影响行数在帧头参数区偏移 24（int64，Go zq.go Dm_build_354）
                 let affected = le_i64(&f.opts, 4) as u64;
