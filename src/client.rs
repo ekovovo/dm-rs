@@ -1005,12 +1005,29 @@ impl DmClient {
             }
             let dlen = dlen as usize;
             let end = (15 + dlen).min(f.body.len());
-            all.extend_from_slice(&f.body[15..end]);
+            let chunk = &f.body[15..end];
+            all.extend_from_slice(chunk);
             cur_file = i16::from_le_bytes(f.body[5..7].try_into().unwrap());
             cur_page = i32::from_le_bytes(f.body[7..11].try_into().unwrap());
             total_offset = i32::from_le_bytes(f.body[11..15].try_into().unwrap());
-            // 按服务器实际返回的量推进：CLOB 的 dlen 是字符数（不是请求的字节数），BLOB 是字节数
-            offset += dlen as i64;
+            if is_clob {
+                // dlen 是本次返回的字节数；服务器在数据后附带一个 int32 字符数
+                // （Go lobRetInfo.charLen，缺失时为 -1）。偏移按字符数推进，
+                // 服务器没给时退回解码后的字符数。
+                let chars = if end + 4 <= f.body.len() {
+                    i32::from_le_bytes(f.body[end..end + 4].try_into().unwrap())
+                } else {
+                    -1
+                };
+                offset += if chars > 0 {
+                    chars as i64
+                } else {
+                    let (s, _, _) = self.svr_encoding.decode(chunk);
+                    s.chars().count() as i64
+                };
+            } else {
+                offset += dlen as i64;
+            }
             if read_over != 0 {
                 break;
             }
